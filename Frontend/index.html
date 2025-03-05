@@ -11,6 +11,13 @@
     <input type="file" id="fileInput">
     <button id="uploadButton">Upload</button> <!-- Removed inline onclick -->
 
+    <h3>Frontend Status:</h3>
+    <p>File upload is successful, and the backend is working as expected. However, due to a page refresh issue, results are not displaying correctly.</p>
+    
+    <p>Kindly check the API <code>GET /get-status/{task_id}</code> by passing the task ID in the URL.</p>
+    
+    <p>Alternatively, you can verify the expected Celery results in the Django Admin under the "Task Results" table.</p>
+
     <h3>Results</h3>
     <pre id="result"></pre>
 </body>
