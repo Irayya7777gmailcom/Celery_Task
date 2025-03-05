@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Processing Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+    <div class="w-full max-w-2xl bg-white shadow-md rounded-lg p-6">
+        <h1 class="text-2xl font-bold mb-4 text-center text-gray-800">CSV Data Processing</h1>
+        
+        <div class="mb-4">
+            <input 
+                type="file" 
+                id="fileInput" 
+                accept=".csv" 
+                class="w-full p-2 border rounded"
+            >
+        </div>
+        
+        <button 
+            id="uploadButton" 
+            class="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600 transition duration-300"
+        >
+            Upload and Process CSV
+        </button>
+        
+        <div id="loadingSpinner" class="hidden mt-4 text-center">
+            <div class="animate-spin inline-block w-8 h-8 border-4 border-blue-500 rounded-full border-t-transparent"></div>
+            <p class="text-gray-600 mt-2">Processing...</p>
+        </div>
+        
+        <div id="result" class="mt-6 p-4 bg-gray-50 rounded-lg">
+            <p class="text-gray-500 text-center">Results will appear here</p>
+        </div>
+    </div>
+
+    
+<script>
+
+function uploadFile(event) {
+    event.preventDefault();
+    const fileInput = document.getElementById('fileInput');
+    const loadingSpinner = document.getElementById('loadingSpinner');
+    const resultDiv = document.getElementById('result');
+    
+    const file = fileInput.files[0];
+    if (!file) {
+        alert('Please select a CSV file');
+        return;
+    }
+
+    // Validate file type
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+        alert('Please upload a CSV file only');
+        return;
+    }
+
+    // Show loading spinner
+    loadingSpinner.classList.remove('hidden');
+    resultDiv.innerHTML = '<p class="text-gray-500 text-center">Processing...</p>';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    uploadWithRetry(formData, loadingSpinner, resultDiv);
+}
+
+function uploadWithRetry(formData, loadingSpinner, resultDiv, retryCount = 0) {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 2000; // 2 seconds
+
+    fetch('http://127.0.0.1:8000/upload/', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'Cache-Control': 'no-cache'
+        }
+    })
+    .then(response => {
+        if (!response.ok) {
+            // Log detailed error information
+            console.error('Upload response status:', response.status);
+            throw new Error(`Network response was not ok: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.task_id) {
+            console.log('Task ID received:', data.task_id);
+            checkTaskStatus(data.task_id);
+        } else {
+            throw new Error('No task ID received');
+        }
+    })
+    .catch(error => {
+        console.error('Upload error:', error);
+
+        // Implement retry mechanism
+        if (retryCount < MAX_RETRIES) {
+            console.log(`Retrying upload... (${retryCount + 1}/${MAX_RETRIES})`);
+            setTimeout(() => {
+                uploadWithRetry(formData, loadingSpinner, resultDiv, retryCount + 1);
+            }, RETRY_DELAY * (retryCount + 1));
+        } else {
+            // Final error handling
+            loadingSpinner.classList.add('hidden');
+            resultDiv.innerHTML = `
+                <p class="text-red-500 text-center">
+                    Upload Failed: ${error.message}
+                    <br>Please try again or check your connection.
+                </p>
+            `;
+        }
+    });
+}
+
+function checkTaskStatus(taskId, retryCount = 0) {
+    const MAX_RETRIES = 5;
+    const loadingSpinner = document.getElementById('loadingSpinner');
+    const resultDiv = document.getElementById('result');
+
+    fetch(`http://127.0.0.1:8000/task-status/${taskId}/`, {
+        headers: {
+            'Cache-Control': 'no-cache'
+        }
+    })
+    .then(response => {
+        if (!response.ok) {
+            console.error('Task status response:', response.status);
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        console.log('Task status:', data.status);
+
+        switch(data.status) {
+            case 'SUCCESS':
+                loadingSpinner.classList.add('hidden');
+                displayResults(data.result);
+                break;
+            case 'FAILURE':
+                loadingSpinner.classList.add('hidden');
+                resultDiv.innerHTML = `
+                    <p class="text-red-500 text-center">
+                        Task Failed: ${data.error || 'Unknown error'}
+                    </p>
+                `;
+                break;
+            default:
+                // Pending or unknown status
+                if (retryCount < MAX_RETRIES) {
+                    setTimeout(() => {
+                        checkTaskStatus(taskId, retryCount + 1);
+                    }, Math.pow(2, retryCount) * 1000);
+                } else {
+                    loadingSpinner.classList.add('hidden');
+                    resultDiv.innerHTML = `
+                        <p class="text-yellow-500 text-center">
+                            Task processing timed out. Please try again.
+                        </p>
+                    `;
+                }
+        }
+    })
+    .catch(error => {
+        console.error('Status check error:', error);
+        
+        if (retryCount < MAX_RETRIES) {
+            setTimeout(() => {
+                checkTaskStatus(taskId, retryCount + 1);
+            }, Math.pow(2, retryCount) * 1000);
+        } else {
+            loadingSpinner.classList.add('hidden');
+            resultDiv.innerHTML = `
+                <p class="text-red-500 text-center">
+                    Error checking task status: ${error.message}
+                </p>
+            `;
+        }
+    });
+}
+
+function displayResults(data) {
+    const resultDiv = document.getElementById('result');
+    
+    // Defensive programming: check if data exists
+    if (!data) {
+        resultDiv.innerHTML = `
+            <p class="text-red-500 text-center">
+                No results available
+            </p>
+        `;
+        return;
+    }
+
+    // Add more detailed error checking for nested properties
+    resultDiv.innerHTML = `
+        <div class="space-y-4">
+            <div class="bg-blue-50 p-4 rounded-lg">
+                <h3 class="text-lg font-semibold text-blue-800 mb-2">Summary Statistics</h3>
+                <p>Total Revenue: $${data.total_revenue?.toFixed(2) || 'N/A'}</p>
+                <p>Average Discount: ${data.average_discount 
+                    ? (data.average_discount * 100).toFixed(2) + '%' 
+                    : 'N/A'}</p>
+            </div>
+
+            <div class="bg-green-50 p-4 rounded-lg">
+                <h3 class="text-lg font-semibold text-green-800 mb-2">Aggregate Metrics</h3>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <p>Total Sales: $${data.sum?.Sales?.toFixed(2) || 'N/A'}</p>
+                        <p>Total Quantity: ${data.sum?.Quantity || 'N/A'}</p>
+                    </div>
+                    <div>
+                        <p>Average Sales: $${data.average?.Sales?.toFixed(2) || 'N/A'}</p>
+                        <p>Average Quantity: ${data.average?.Quantity || 'N/A'}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-purple-50 p-4 rounded-lg">
+                <h3 class="text-lg font-semibold text-purple-800 mb-2">Product Insights</h3>
+                <p>Best Selling Product: ${data.best_selling_product || 'N/A'}</p>
+                <p>Most Profitable Product: ${data.most_profitable_product || 'N/A'}</p>
+                <p>Product with Max Discount: ${data.max_discount_product || 'N/A'}</p>
+            </div>
+        </div>
+    `;
+}
+
+// Add event listener
+document.addEventListener('DOMContentLoaded', () => {
+    const uploadButton = document.getElementById('uploadButton');
+    const fileInput = document.getElementById('fileInput');
+
+    if (uploadButton) {
+        uploadButton.addEventListener('click', uploadFile);
+    } else {
+        console.error('Upload button not found!');
+    }
+
+    // Optional: Clear file input on page load
+    if (fileInput) {
+        fileInput.value = '';
+    }
+});
+</script>
+</body>
+</html>
